@@ -49,13 +49,17 @@ void trimElevetor(){
   int TrimE = analogRead(trimE);
   int nowTrimE = LOW;
   if(0 <= TrimE && TrimE <=100){    //優先度1 ,0
-    Trimelevetor += 10;
+    Trimelevetor += 3;
     nowTrimE = HIGH;
   }else if(1000 <= TrimE && TrimE <=1200){  // 優先度2, 1100
-    Trimelevetor -= 10;
+    Trimelevetor -= 3;
     nowTrimE = HIGH;
   }else if(2000 <= TrimE && TrimE <= 2300){  //優先度3, 2180
     is_buttun3 += 1;
+    if(is_buttun3 > 60){
+      neutralTrimeEle = Trimelevetor;
+      is_buttun3 = 0;
+    }
     Trimelevetor = neutralTrimeEle; //neutral
     nowTrimE = HIGH;
   }else if(3300 <= TrimE && TrimE <= 3500 && millis() - lastPushed > 250){   //優先度4 ,3100,　何ms間隔で検出
@@ -68,7 +72,6 @@ void trimElevetor(){
     nowTrimE = HIGH;
     lastPushed = millis();
   }else{
-    digitalWrite(LED,LOW);
     is_buttun3 = 0;
   }
 }
