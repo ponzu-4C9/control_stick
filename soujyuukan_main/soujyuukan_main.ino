@@ -48,17 +48,17 @@ int is_buttun3 = 0;//ボタン3長押し検知用
 void trimElevetor(){
   int TrimE = analogRead(trimE);
   int nowTrimE = LOW;
-  if(0 <= TrimE && TrimE <=100 && lastTrimE == LOW){    //優先度1 ,0
+  if(0 <= TrimE && TrimE <=100){    //優先度1 ,0
     Trimelevetor += 10;
     nowTrimE = HIGH;
-  }else if(1000 <= TrimE && TrimE <=1200 && lastTrimE == LOW){  // 優先度2, 1100
+  }else if(1000 <= TrimE && TrimE <=1200){  // 優先度2, 1100
     Trimelevetor -= 10;
     nowTrimE = HIGH;
-  }else if(2000 <= TrimE && TrimE <= 2300 && lastTrimE == LOW){  //優先度3, 2180
+  }else if(2000 <= TrimE && TrimE <= 2300){  //優先度3, 2180
     is_buttun3 += 1;
     Trimelevetor = neutralTrimeEle; //neutral
     nowTrimE = HIGH;
-  }else if(3300 <= TrimE && TrimE <= 3500 && lastTrimE == LOW && millis() - lastPushed > 250){   //優先度4 ,3100,　何ms間隔で検出
+  }else if(3300 <= TrimE && TrimE <= 3500 && millis() - lastPushed > 250){   //優先度4 ,3100,　何ms間隔で検出
     digitalWrite(LED,HIGH);
     if(is_pid){
       is_pid = 0;
@@ -71,7 +71,6 @@ void trimElevetor(){
     digitalWrite(LED,LOW);
     is_buttun3 = 0;
   }
-  lastTrimE = nowTrimE;
 }
 
 int senterEle = 0;
