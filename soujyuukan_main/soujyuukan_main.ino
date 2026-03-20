@@ -17,10 +17,10 @@ const int LED = 5;
 const int resetPin = 6; // NVMリセット用ピンを変更 (GPIO 0番ピンをGNDとショートでリセット)
 const int trimR1 = 9;  //トリムラダー
 const int trimR2 = 10; //トリムラダー
-int ServoDegreeElevatorMax = 11500;
-int ServoDegreeElevatorMin = 3500;
-int ServoDegreeRudderMax = 11500;
-int ServoDegreeRudderMin = 3500;
+int ServoElevatorMax = 11500;
+int ServoElevatorMin = 3500;
+int ServoRudderMax = 11500;
+int ServoRudderMin = 3500;
 int TrimElevatorMax = 2000;
 int TrimElevatorMin = -2000;
 int TrimRudderMax = 2000;
@@ -64,12 +64,11 @@ void pidReset(PidState* state) {
   state->lastTime = millis();
 }
 
-float pidCompute(PidState* state, float setpoint, float measured) {
+float pidCompute(PidState* state, float error) {
   unsigned long now = millis();
   float dt = (now - state->lastTime) / 1000.0;
   if (dt <= 0) dt = 0.001;
 
-  float error = setpoint - measured;
   state->integral += error * dt;
   state->integral = constrain(state->integral, -state->integralMax, state->integralMax);
   float derivative = (error - state->lastError) / dt;
@@ -79,7 +78,7 @@ float pidCompute(PidState* state, float setpoint, float measured) {
   state->lastError = error;
   state->lastTime = now;
 
-  return measured + output;
+  return output;
 }
 
 // 設定を読み込む関数
@@ -158,10 +157,8 @@ void Ltika(void *pvParameters){
 int elevetor = 0;
 int rudder = 0;
 void Potentiometer(){
-  int R_elevetor = analogRead(r_elevator);
-  int R_rudder = analogRead(r_rudder);
-  elevetor = map(R_elevetor,0,4095,ServoDegreeElevatorMin,ServoDegreeElevatorMax);     //neutral:7500
-  rudder = map(R_rudder,0,4095,ServoDegreeRudderMin,ServoDegreeRudderMax);         //neutral:7500
+  elevetor = analogRead(r_elevator);
+  rudder = analogRead(r_rudder);
 }
 
 unsigned long lastPushed = millis();//ボタン4チャタリング防止用
@@ -230,21 +227,16 @@ void mainloop(void *pvParameters) {
     Potentiometer();
     trimElevetor();
     trimRudder();
-    int ServoDegreeE = elevetor + Trimelevetor;
-    int ServoDegreeR = rudder + Trimrudder;
+    int ELE = elevetor + Trimelevetor;
+    int RUD = rudder + Trimrudder;
 
     if (is_pid) {
       digitalWrite(LED, HIGH);
-      ServoDegreeE = (int)pidCompute(&pidElevator, ServoDegreeE, currentPitch);
-      ServoDegreeR = (int)pidCompute(&pidRudder, ServoDegreeR, currentYaw);
+      // float error = setpoint - measured;
+      // ELE = (int)pidCompute(&pidElevator,error);
     } else {
       digitalWrite(LED, LOW);
     }
-    ServoDegreeE = constrain(ServoDegreeE, ServoDegreeElevatorMin, ServoDegreeElevatorMax);
-    ServoDegreeR = constrain(ServoDegreeR, ServoDegreeRudderMin, ServoDegreeRudderMax);
-
-    lastOutputE = ServoDegreeE;
-    lastOutputR = ServoDegreeR;
 
     krs.setPos(0, ServoDegreeE);
     krs.setPos(1, ServoDegreeR);
