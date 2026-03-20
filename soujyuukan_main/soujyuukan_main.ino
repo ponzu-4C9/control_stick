@@ -21,6 +21,10 @@ int ServoDegreeElevatorMax = 11500;
 int ServoDegreeElevatorMin = 3500;
 int ServoDegreeRudderMax = 11500;
 int ServoDegreeRudderMin = 3500;
+int TrimElevatorMax = 2000;
+int TrimElevatorMin = -2000;
+int TrimRudderMax = 2000;
+int TrimRudderMin = -2000;
 IcsHardSerialClass krs(&Serial0,EN_PIN,BAUDRATE,TIMEOUT); //インスタンス＋ENピン(8番ピン)およびUARTの指定
 
 // 変数の宣言
@@ -33,6 +37,7 @@ int is_pid = 0;//今PID制御をONにするかどうか(0か1)
 struct PidState {
   float kp, ki, kd;
   float integral;
+  float integralMax;
   float lastError;
   unsigned long lastTime;
 };
@@ -40,12 +45,15 @@ PidState pidElevator;
 PidState pidRudder;
 float lastOutputE = 7500;
 float lastOutputR = 7500;
+float currentPitch = 7500; // 姿勢角（ピッチ）：IMUから取得する値をここに入れる
+float currentYaw = 7500;   // 姿勢角（ヨー）：IMUから取得する値をここに入れる
 
-void pidInit(PidState* state, float kp, float ki, float kd) {
+void pidInit(PidState* state, float kp, float ki, float kd, float integralMax) {
   state->kp = kp;
   state->ki = ki;
   state->kd = kd;
   state->integral = 0;
+  state->integralMax = integralMax;
   state->lastError = 0;
   state->lastTime = millis();
 }
@@ -63,6 +71,7 @@ float pidCompute(PidState* state, float setpoint, float measured) {
 
   float error = setpoint - measured;
   state->integral += error * dt;
+  state->integral = constrain(state->integral, -state->integralMax, state->integralMax);
   float derivative = (error - state->lastError) / dt;
 
   float output = state->kp * error + state->ki * state->integral + state->kd * derivative;
@@ -163,11 +172,11 @@ void trimElevetor(){
   int TrimE = analogRead(trimE);
   
   if(0 <= TrimE && TrimE <=100){    //優先度1
-    Trimelevetor += 3;
+    Trimelevetor = constrain(Trimelevetor + 3, TrimElevatorMin, TrimElevatorMax);
     settingsChanged = true;
 
   }else if(1000 <= TrimE && TrimE <=1200){  // 優先度2
-    Trimelevetor -= 3;
+    Trimelevetor = constrain(Trimelevetor - 3, TrimElevatorMin, TrimElevatorMax);
     settingsChanged = true;
 
   }else if(2000 <= TrimE && TrimE <= 2300){  //優先度3
@@ -186,7 +195,6 @@ void trimElevetor(){
   }else if(3300 <= TrimE && TrimE <= 3500 && millis() - lastPushed > 250){   //優先度4
     is_pid = !is_pid;
     lastPushed = millis();
-    settingsChanged = true;
   }else{
     is_buttun3 = 0;
     // ボタンが離された瞬間に変更があれば保存
@@ -205,11 +213,11 @@ void trimRudder(){
     int nowTrimR2 = digitalRead(trimR2);
 
     if (nowTrimR1 == HIGH && lastTrimR1 == LOW) {
-      Trimrudder += 10;
+      Trimrudder = constrain(Trimrudder + 10, TrimRudderMin, TrimRudderMax);
       if (nvmTaskHandle != NULL) xTaskNotifyGive(nvmTaskHandle);
     }
     if (nowTrimR2 == HIGH && lastTrimR2 == LOW) {
-      Trimrudder -= 10;
+      Trimrudder = constrain(Trimrudder - 10, TrimRudderMin, TrimRudderMax);
       if (nvmTaskHandle != NULL) xTaskNotifyGive(nvmTaskHandle);
     }
     lastTrimR1 = nowTrimR1;
@@ -227,11 +235,14 @@ void mainloop(void *pvParameters) {
 
     if (is_pid) {
       digitalWrite(LED, HIGH);
-      ServoDegreeE = (int)pidCompute(&pidElevator, ServoDegreeE, lastOutputE);
-      ServoDegreeR = (int)pidCompute(&pidRudder, ServoDegreeR, lastOutputR);
+      ServoDegreeE = (int)pidCompute(&pidElevator, ServoDegreeE, currentPitch);
+      ServoDegreeR = (int)pidCompute(&pidRudder, ServoDegreeR, currentYaw);
     } else {
       digitalWrite(LED, LOW);
     }
+    ServoDegreeE = constrain(ServoDegreeE, ServoDegreeElevatorMin, ServoDegreeElevatorMax);
+    ServoDegreeR = constrain(ServoDegreeR, ServoDegreeRudderMin, ServoDegreeRudderMax);
+
     lastOutputE = ServoDegreeE;
     lastOutputR = ServoDegreeR;
 
@@ -262,8 +273,8 @@ void setup() {
   pinMode(trimR2,INPUT);
   pinMode(resetPin, INPUT);
 
-  pidInit(&pidElevator, 1.0, 0.1, 0.05);
-  pidInit(&pidRudder, 1.0, 0.1, 0.05);
+  pidInit(&pidElevator, 1.0, 0.1, 0.05, 1000.0);
+  pidInit(&pidRudder, 1.0, 0.1, 0.05, 1000.0);
 
   // 各タスクの生成
   xTaskCreate(nvmTask, "nvmTask", 4096, NULL, 2, &nvmTaskHandle);
