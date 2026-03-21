@@ -67,8 +67,8 @@ const int LED = 5;
 const int resetPin = 6;        // NVMリセット用ピンを変更 (GPIO 0番ピンをGNDとショートでリセット)
 const int trimR1 = 9;          //トリムラダー
 const int trimR2 = 10;         //トリムラダー
-int ServoElevatorMax = 11500;  //+10°
-int ServoElevatorMin = 3500;   //-10°
+int ServoElevatorMax = 8000;  //機種上げ
+int ServoElevatorMin = 3500;   //機種下げ
 int ServoRudderMax = 11500;    //+10°
 int ServoRudderMin = 3500;     //-10°
 int TrimElevatorMax = 2000;
@@ -229,11 +229,11 @@ int RUD;
 int elergs[4] = { 1120, 1590, 1930, 2460 };  // エレベーター: 前限界, 前戻り, 後戻り, 後限界
 int rudrgs[4] = { 1550, 2120, 2520, 3100 };
 
-const int hisSize = 3;//getMedianの中のtemp配列の大きさを気にする
+const int hisSize = 5;//getMedianの中のtemp配列の大きさを気にする
 int eleHistory[hisSize]={0};
 int rudHistory[hisSize]={0};
 
-
+int prefELE = 0;
 void Potentiometer() {
 
   for (int i = 0;i < hisSize-1;i++){
@@ -247,35 +247,14 @@ void Potentiometer() {
   ELE = getMedian(eleHistory,hisSize);
   RUD = getMedian(rudHistory,hisSize);
 
+  float alfa = 0.7;
+  int fELE = ELE*alfa + prefELE*(1-alfa);
+  prefELE = fELE;
+
   int is_detzone = 0;
   if (is_detzone) {
-    // エレベーターのデッドゾーン + リマッピング
-    if (ELE < elergs[0]) {
-      elevetor = ServoElevatorMax;
-    } else if (ELE < elergs[1]) {
-      elevetor = map(ELE, elergs[0], elergs[1], ServoElevatorMax, 7500);
-    } else if (ELE < elergs[2]) {
-      elevetor = 7500;
-    } else if (ELE < elergs[3]) {
-      elevetor = map(ELE, elergs[2], elergs[3], 7500, ServoElevatorMin);
-    } else {
-      elevetor = ServoElevatorMin;
-    }
-
-    // ラダーのデッドゾーン + リマッピング
-    if (RUD < rudrgs[0]) {
-      rudder = ServoRudderMax;
-    } else if (RUD < rudrgs[1]) {
-      rudder = map(RUD, rudrgs[0], rudrgs[1], ServoRudderMax, 7500);
-    } else if (RUD < rudrgs[2]) {
-      rudder = 7500;
-    } else if (RUD < rudrgs[3]) {
-      rudder = map(RUD, rudrgs[2], rudrgs[3], 7500, ServoRudderMin);
-    } else {
-      rudder = ServoRudderMin;
-    }
   } else {
-    elevetor = map(ELE, elergs[0], elergs[3], ServoElevatorMax, ServoElevatorMin);
+    elevetor = map(fELE, elergs[0], elergs[3], ServoElevatorMax, ServoElevatorMin);
     rudder = map(RUD, rudrgs[0], rudrgs[3], ServoRudderMax, ServoRudderMin);
   }
 }
@@ -360,6 +339,8 @@ void mainloop(void *pvParameters) {
       digitalWrite(LED, LOW);
     }
 
+
+    //クリッピング
     ServoDegreeE = constrain(ServoDegreeE, ServoElevatorMin, ServoElevatorMax);
     ServoDegreeR = constrain(ServoDegreeR, ServoRudderMin, ServoRudderMax);
 
@@ -396,7 +377,6 @@ void setup() {
   loadSettings();
 
   krs.begin();
-  krs.setPos(0, 7500);
   krs.setSpd(0, 127);
   krs.setSpd(1, 127);
 
