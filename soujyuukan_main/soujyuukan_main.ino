@@ -39,8 +39,8 @@ class MyServerCallbacks : public BLEServerCallbacks {
     pServer->getAdvertising()->start();
   }
 };
-float currentPitch = 7500;  // 姿勢角（ピッチ）：IMUから取得する値をここに入れる
-float currentYaw = 7500;    // 姿勢角（ヨー）：IMUから取得する値をここに入れる
+volatile float currentPitch = 0.0;  // 姿勢角（ピッチ）[°]
+volatile float currentYaw = 0.0;    // 姿勢角（ヨー）[°]
 class MyCharCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic* pChar) {
     uint8_t* data = pChar->getData();
@@ -67,20 +67,29 @@ const int LED = 5;
 const int resetPin = 6;        // NVMリセット用ピンを変更 (GPIO 0番ピンをGNDとショートでリセット)
 const int trimR1 = 9;          //トリムラダー
 const int trimR2 = 10;         //トリムラダー
-int ServoElevatorMax = 8000;  //機種上げ
-int ServoElevatorMin = 3500;   //機種下げ
-int ServoRudderMax = 11500;    //+10°
-int ServoRudderMin = 3500;     //-10°
-int TrimElevatorMax = 2000;
-int TrimElevatorMin = -2000;
-int TrimRudderMax = 2000;
-int TrimRudderMin = -2000;
+
+/*
+ここがめっちゃ重要。詳しくは同じディレクトリにある。.docsを参照
+*/
+// サーボ角度上下限 [°]
+const float ElevatorDegMin = -135;  // 機種下げ
+const float ElevatorDegMed = ElevatorDegMin + 76.3;
+const float ElevatorDegMax = ElevatorDegMin + 76.3*2;   // 機種上げ
+const float RudderDegMax = 135;     // ラダー右
+const float RudderDegMin = RudderDegMax - 76.3*2;    // ラダー左
+
+// 近藤サーボKRS値上下限（度数→KRS変換用）
+// 角度からKRS値(3500〜11500)への変換式: KRS値 = (角度 / 0.03375) + 7500
+const int KrsElevatorMax = (ElevatorDegMax / (135.0/4000)) + 7500;  // ElevatorDegMax に対応
+const int KrsElevatorMin = (ElevatorDegMin / (135.0/4000)) + 7500;  // ElevatorDegMin に対応
+const int KrsRudderMax = (RudderDegMax / (135.0/4000)) + 7500;      // RudderDegMax に対応
+const int KrsRudderMin = (RudderDegMin / (135.0/4000)) + 7500;      // RudderDegMin に対応
 IcsHardSerialClass krs(&Serial0, EN_PIN, BAUDRATE, TIMEOUT);  //インスタンス＋ENピン(8番ピン)およびUARTの指定
 
-// 変数の宣言
-int Trimelevetor = 0;
-int neutralTrimeEle = 0;
-int Trimrudder = 0;
+// 変数の宣言 [°]
+float Trimelevetor = 0.0;
+float neutralTrimeEle = 0.0;
+float Trimrudder = 0.0;
 int is_pid = 0;  //今PID制御をONにするかどうか(0か1)
 
 // PID制御の状態
@@ -110,17 +119,17 @@ void pidReset(PidState *state) {
   state->lastTime = millis();
 }
 
-float pidCompute(PidState *state, float error) {
+double pidCompute(PidState *state, double error) {
   unsigned long now = millis();
-  float dt = (now - state->lastTime) / 1000.0;
+  double dt = (now - state->lastTime) / 1000.0;
   if (dt <= 0) dt = 0.001;
 
   state->integral += error * dt;
   state->integral = constrain(state->integral, -state->integralMax, state->integralMax);
-  float derivative = (error - state->lastError) / dt;
+  double derivative = (error - state->lastError) / dt;
 
   //kp * e + ki * ∫e dt + kd + de/dt
-  float output = state->kp * error + state->ki * state->integral + state->kd * derivative;
+  double output = state->kp * error + state->ki * state->integral + state->kd * derivative;
 
   state->lastError = error;
   state->lastTime = now;
@@ -131,11 +140,11 @@ float pidCompute(PidState *state, float error) {
 // 設定を読み込む関数
 void loadSettings() {
   preferences.begin("trim-data", true);
-  Trimelevetor = preferences.getInt("trimE", 0);
-  neutralTrimeEle = preferences.getInt("neutE", 0);
-  Trimrudder = preferences.getInt("trimR", 0);
+  Trimelevetor = preferences.getFloat("trimE", 0.0);
+  neutralTrimeEle = preferences.getFloat("neutE", 0.0);
+  Trimrudder = preferences.getFloat("trimR", 0.0);
   preferences.end();
-  Serial.printf("Settings Loaded: E=%d, neutE=%d, R=%d\n", Trimelevetor, neutralTrimeEle, Trimrudder);
+  Serial.printf("Settings Loaded: E=%.2f, neutE=%.2f, R=%.2f\n", Trimelevetor, neutralTrimeEle, Trimrudder);
 }
 
 // 非同期でFlashに保存するタスク
@@ -145,9 +154,9 @@ void nvmTask(void *pvParameters) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
     preferences.begin("trim-data", false);
-    preferences.putInt("trimE", Trimelevetor);
-    preferences.putInt("neutE", neutralTrimeEle);
-    preferences.putInt("trimR", Trimrudder);
+    preferences.putFloat("trimE", Trimelevetor);
+    preferences.putFloat("neutE", neutralTrimeEle);
+    preferences.putFloat("trimR", Trimrudder);
     preferences.end();
     Serial.println(">> Settings saved to NVM");
   }
@@ -168,9 +177,9 @@ void resetMonitorTask(void *pvParameters) {
         preferences.end();
 
         // メモリ上の値も初期化
-        Trimelevetor = 0;
-        neutralTrimeEle = 0;
-        Trimrudder = 0;
+        Trimelevetor = 0.0;
+        neutralTrimeEle = 0.0;
+        Trimrudder = 0.0;
 
         // リセット成功の合図としてLEDを高速点滅(5回)
         for (int i = 0; i < 5; i++) {
@@ -201,14 +210,21 @@ void Ltika(void *pvParameters) {
   vTaskDelete(NULL);
 }
 
+// floatのmap関数
+float fmap(float x, float in_min, float in_max, float out_min, float out_max) {
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
 //中央値フィルタ
 int getMedian(int* array, int size) {
   int temp[5];
-  for (int i = 0; i < size; i++) temp[i] = array[i];
-  
+  // tempのサイズ(5)を超える場合は安全のため5に制限する
+  int copySize = size > 5 ? 5 : size;
+  for (int i = 0; i < copySize; i++) temp[i] = array[i];
+
   // バブルソートで小さい順に並べ替え
-  for (int i = 0; i < size - 1; i++) {
-    for (int j = i + 1; j < size; j++) {
+  for (int i = 0; i < copySize - 1; i++) {
+    for (int j = i + 1; j < copySize; j++) {
       if (temp[i] > temp[j]) {
         int t = temp[i];
         temp[i] = temp[j];
@@ -216,11 +232,27 @@ int getMedian(int* array, int size) {
       }
     }
   }
-  return temp[size / 2]; // 中央の値を返す
+  return temp[copySize / 2]; // 中央の値を返す
+}
+int detzoneMapping(int *ary,int x,float *y,float min,float med,float max){
+  int r = 0;
+  if(x <= ary[0]){
+    *y = min;
+  }else if(ary[0] < x && x <= ary[1]){
+    *y = fmap(x,ary[0],ary[1],min,med);
+  }else if(ary[1] < x && x <= ary[2]){
+    *y = med;
+    r = 1;
+  }else if(ary[2] < x && x <= ary[3]){
+    *y = fmap(x,ary[2],ary[3],med,max);
+  }else{
+    *y = max;
+  }
+  return r;
 }
 
-int elevetor = 0;
-int rudder = 0;
+float elevetor = 0.0;  // [°]
+float rudder = 0.0;    // [°]
 int rawEle = 0;
 int rawRud = 0;
 int ELE;
@@ -234,6 +266,8 @@ int eleHistory[hisSize]={0};
 int rudHistory[hisSize]={0};
 
 int prefELE = 0;
+int prefRud = 0;
+int is_center = 0;
 void Potentiometer() {
 
   for (int i = 0;i < hisSize-1;i++){
@@ -247,16 +281,15 @@ void Potentiometer() {
   ELE = getMedian(eleHistory,hisSize);
   RUD = getMedian(rudHistory,hisSize);
 
-  float alfa = 0.7;
+  float alfa = 0.3;
   int fELE = ELE*alfa + prefELE*(1-alfa);
   prefELE = fELE;
 
-  int is_detzone = 0;
-  if (is_detzone) {
-  } else {
-    elevetor = map(fELE, elergs[0], elergs[3], ServoElevatorMax, ServoElevatorMin);
-    rudder = map(RUD, rudrgs[0], rudrgs[3], ServoRudderMax, ServoRudderMin);
-  }
+  int fRUD = RUD*alfa + prefRud*(1-alfa);
+  prefRud = fRUD;
+
+  is_center = detzoneMapping(elergs, fELE, &elevetor, ElevatorDegMax, ElevatorDegMed, ElevatorDegMin);
+  detzoneMapping(rudrgs, fRUD, &rudder, RudderDegMin, (RudderDegMin+RudderDegMax)/2, RudderDegMax);
 }
 
 unsigned long lastPushed = millis();  //ボタン4チャタリング防止用
@@ -267,11 +300,11 @@ void trimElevetor() {
   int TrimE = analogRead(trimE);
 
   if (0 <= TrimE && TrimE <= 100) {  //優先度1
-    Trimelevetor = constrain(Trimelevetor + 3, TrimElevatorMin, TrimElevatorMax);
+    Trimelevetor = Trimelevetor + 1;
     settingsChanged = true;
 
   } else if (1000 <= TrimE && TrimE <= 1200) {  // 優先度2
-    Trimelevetor = constrain(Trimelevetor - 3, TrimElevatorMin, TrimElevatorMax);
+    Trimelevetor = Trimelevetor - 1;
     settingsChanged = true;
 
   } else if (2000 <= TrimE && TrimE <= 2300) {  //優先度3
@@ -308,11 +341,11 @@ void trimRudder() {
   int nowTrimR2 = digitalRead(trimR2);
 
   if (nowTrimR1 == HIGH && lastTrimR1 == LOW) {
-    Trimrudder = constrain(Trimrudder + 10, TrimRudderMin, TrimRudderMax);
+    Trimrudder = Trimrudder + 5;
     if (nvmTaskHandle != NULL) xTaskNotifyGive(nvmTaskHandle);
   }
   if (nowTrimR2 == HIGH && lastTrimR2 == LOW) {
-    Trimrudder = constrain(Trimrudder - 10, TrimRudderMin, TrimRudderMax);
+    Trimrudder = Trimrudder - 5f;
     if (nvmTaskHandle != NULL) xTaskNotifyGive(nvmTaskHandle);
   }
   lastTrimR1 = nowTrimR1;
@@ -328,24 +361,40 @@ void mainloop(void *pvParameters) {
     Potentiometer();
     trimElevetor();
     trimRudder();
-    int ServoDegreeE = elevetor + Trimelevetor;
-    int ServoDegreeR = rudder + Trimrudder;
+    float degE = elevetor + Trimelevetor;
+    float degR = rudder + Trimrudder;
 
+    float errorE = 0.0 - currentPitch;
+    float tempDegE = pidCompute(&pidElevator, errorE);
+    /*
+    tempDegEについて、
+    これは-10から10をとる値で、これはそのまま舵角を表す。
+    */
+    //本番はこれを下記のif文に変更
     if (is_pid) {
-      digitalWrite(LED, HIGH);
-      float errorE = 0 - currentPitch;
-      ServoDegreeE = (int)pidCompute(&pidElevator, errorE);
+      if(is_center){
+        digitalWrite(LED, HIGH);
+        degE = -0.000208*pow(tempDegE,5)- 0.0001122*pow(tempDegE,4) - 0.003882*pow(tempDegE,3) - 0.0145*pow(tempDegE,2) - 5.812* tempDegE - 58.46 + Trimelevetor;
+      }else{
+        is_pid = 0;
+        pidReset(&pidElevator);
+        digitalWrite(LED, LOW);
+      }
     } else {
       digitalWrite(LED, LOW);
+      pidReset(&pidElevator);
     }
 
+    // クリッピング [°]
+    degE = constrain(degE, ElevatorDegMin, ElevatorDegMax);
+    degR = constrain(degR, RudderDegMin, RudderDegMax);
 
-    //クリッピング
-    ServoDegreeE = constrain(ServoDegreeE, ServoElevatorMin, ServoElevatorMax);
-    ServoDegreeR = constrain(ServoDegreeR, ServoRudderMin, ServoRudderMax);
+    // 度数 → 近藤KRS値に変換
+    int krsE = (int)fmap(degE, ElevatorDegMin, ElevatorDegMax, KrsElevatorMin, KrsElevatorMax);
+    int krsR = (int)fmap(degR, RudderDegMin, RudderDegMax, KrsRudderMin, KrsRudderMax);
 
-    int setpos0 = krs.setPos(0, ServoDegreeE);
-    int setpos1 = krs.setPos(1, ServoDegreeR);
+    int setpos0 = krs.setPos(0, krsR);
+    int setpos1 = krs.setPos(1, krsE);
     int getposE = krs.getPos(0);
     int getposR = krs.getPos(1);
 
@@ -354,15 +403,15 @@ void mainloop(void *pvParameters) {
       ControlToTest txData;
       txData.rawEle = (int16_t)rawEle;
       txData.rawRud = (int16_t)rawRud;
-      txData.servoE = (int16_t)ServoDegreeE;
-      txData.servoR = (int16_t)ServoDegreeR;
+      txData.servoE = (int16_t)krsE;
+      txData.servoR = (int16_t)krsR;
       txData.getposE = (int16_t)getposE;
       txData.getposR = (int16_t)getposR;
       pCharacteristic->setValue((uint8_t*)&txData, sizeof(ControlToTest));
       pCharacteristic->notify();
     }
 
-    Serial.printf("E:%d(%d) R:%d(%d) raw:%d,%d getPos: %d,%d setpos %d,%d\n", ServoDegreeE, elevetor, ServoDegreeR, rudder, rawEle, rawRud,krs.getPos(0),krs.getPos(1));
+    Serial.printf("E:%.1f R:%.1f krs:%d,%d raw:%d,%d getPos:%d,%d pitch%f pid%f \n", degE, degR, krsE, krsR, rawEle, rawRud, getposE, getposR,currentPitch,tempDegE);
 
 
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
@@ -372,6 +421,7 @@ void mainloop(void *pvParameters) {
 
 void setup() {
   Serial.begin(115200);
+  Serial.println("System Booting..."); // これが見えれば大成功！
 
   // 設定の読み込み
   loadSettings();
@@ -388,8 +438,8 @@ void setup() {
   pinMode(trimR2, INPUT);
   pinMode(resetPin, INPUT);
 
-  pidInit(&pidElevator, 1.0, 0.1, 0.05, 1000.0);
-  pidInit(&pidRudder, 1.0, 0.1, 0.05, 1000.0);
+  pidInit(&pidElevator, -1.0, -0.1, -0.0, 30.0);  // integralMax [°]
+  pidInit(&pidRudder, 1.0, 0.1, 0.05, 30.0);
 
   // BLE初期化
   BLEDevice::init("C3-CONTROL");
