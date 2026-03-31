@@ -71,25 +71,44 @@ const int trimR2 = 10;         //トリムラダー
 /*
 ここがめっちゃ重要。詳しくは同じディレクトリにある。.docsを参照
 */
-// サーボ角度上下限 [°]
-const float ElevatorDegMin = -135;  // 機種下げ
-const float ElevatorDegMed = ElevatorDegMin + 76.3;
-const float ElevatorDegMax = ElevatorDegMin + 76.3*2;   // 機種上げ
-const float RudderDegMax = 135;     // ラダー右
-const float RudderDegMin = RudderDegMax - 76.3*2;    // ラダー左
+// サーボ角度上下限 初期値 [°]
+const float ElevatorDegMinInit = -87;  // 機種下げ
+const float ElevatorDegMaxInit = -28;   // 機種上げ
+const float RudderDegMaxInit = 135;     // ラダー右
+
+// サーボ角度上下限（トリム反映後）
+float ElevatorDegMin;
+float ElevatorDegMax;
+float ElevatorDegMed;
+float RudderDegMax;
+float RudderDegMin;
 
 // 近藤サーボKRS値上下限（度数→KRS変換用）
 // 角度からKRS値(3500〜11500)への変換式: KRS値 = (角度 / 0.03375) + 7500
-const int KrsElevatorMax = (ElevatorDegMax / (135.0/4000)) + 7500;  // ElevatorDegMax に対応
-const int KrsElevatorMin = (ElevatorDegMin / (135.0/4000)) + 7500;  // ElevatorDegMin に対応
-const int KrsRudderMax = (RudderDegMax / (135.0/4000)) + 7500;      // RudderDegMax に対応
-const int KrsRudderMin = (RudderDegMin / (135.0/4000)) + 7500;      // RudderDegMin に対応
+int KrsElevatorMax;
+int KrsElevatorMin;
+int KrsRudderMax;
+int KrsRudderMin;
+
 IcsHardSerialClass krs(&Serial0, EN_PIN, BAUDRATE, TIMEOUT);  //インスタンス＋ENピン(8番ピン)およびUARTの指定
 
 // 変数の宣言 [°]
 float Trimelevetor = 0.0;
 float neutralTrimeEle = 0.0;
 float Trimrudder = 0.0;
+
+// トリムを反映してサーボ上下限を再計算
+void updateServoLimits() {
+  ElevatorDegMin = ElevatorDegMinInit + Trimelevetor;  // 機種下げ
+  ElevatorDegMax = ElevatorDegMaxInit + Trimelevetor;   // 機種上げ
+  ElevatorDegMed = (ElevatorDegMin + ElevatorDegMax) / 2;
+  RudderDegMax = RudderDegMaxInit + Trimrudder;     // ラダー右
+  RudderDegMin = RudderDegMax - 76.3 * 2;              // ラダー左
+  KrsElevatorMax = (ElevatorDegMax / (135.0/4000)) + 7500;
+  KrsElevatorMin = (ElevatorDegMin / (135.0/4000)) + 7500;
+  KrsRudderMax = (RudderDegMax / (135.0/4000)) + 7500;
+  KrsRudderMin = (RudderDegMin / (135.0/4000)) + 7500;
+}
 int is_pid = 0;  //今PID制御をONにするかどうか(0か1)
 
 // PID制御の状態
@@ -316,8 +335,9 @@ void trimElevetor() {
       xTaskCreate(Ltika, "Ltika", 1024, NULL, 9, NULL);
     }
 
-  } else if (!(2000 <= TrimE && TrimE <= 2300) && (2000 <= lastTrimE && lastTrimE <= 2300)) {
+  } else if (is_buttun3 > 0 && !(2000 <= TrimE && TrimE <= 2300)) {
     Trimelevetor = neutralTrimeEle;
+    is_buttun3 = 0;
     settingsChanged = true;
 
   } else if (3300 <= TrimE && TrimE <= 3500 && millis() - lastPushed > 250) {  //優先度4
@@ -345,7 +365,7 @@ void trimRudder() {
     if (nvmTaskHandle != NULL) xTaskNotifyGive(nvmTaskHandle);
   }
   if (nowTrimR2 == HIGH && lastTrimR2 == LOW) {
-    Trimrudder = Trimrudder - 5f;
+    Trimrudder = Trimrudder - 5;
     if (nvmTaskHandle != NULL) xTaskNotifyGive(nvmTaskHandle);
   }
   lastTrimR1 = nowTrimR1;
@@ -361,8 +381,13 @@ void mainloop(void *pvParameters) {
     Potentiometer();
     trimElevetor();
     trimRudder();
+
     float degE = elevetor + Trimelevetor;
     float degR = rudder + Trimrudder;
+
+    //上下限更新
+    updateServoLimits();
+
 
     float errorE = 0.0 - currentPitch;
     float tempDegE = pidCompute(&pidElevator, errorE);
@@ -425,6 +450,7 @@ void setup() {
 
   // 設定の読み込み
   loadSettings();
+  updateServoLimits();  // トリム初期値でサーボ上下限を設定
 
   krs.begin();
   krs.setSpd(0, 127);
