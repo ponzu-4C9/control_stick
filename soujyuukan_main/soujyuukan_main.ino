@@ -266,7 +266,7 @@ int rawRud = 0;
 int ELE;
 int RUD;
 
-int elergs[4] = { 1120, 1590, 1930, 2460 };  // エレベーター: 前限界, 前戻り, 後戻り, 後限界
+int elergs[4] = { 1120, 1590, 1870, 2460 };  // エレベーター: 前限界, 前戻り, 後戻り, 後限界
 int rudrgs[4] = { 1550, 2120, 2520, 3100 };
 
 const int hisSize = 5;//getMedianの中のtemp配列の大きさを気にする
@@ -375,8 +375,8 @@ void mainloop(void *pvParameters) {
     trimElevetor();
     trimRudder();
 
-    float degE = elevetor + Trimelevetor;
-    float degR = rudder + Trimrudder;
+    float degE = elevetor;
+    float degR = rudder;
 
     //上下限更新
     updateServoLimits();
