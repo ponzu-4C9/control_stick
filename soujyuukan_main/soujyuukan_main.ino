@@ -93,6 +93,7 @@ float Trimelevetor = 0.0;
 float neutralTrimeEle = 0.0;
 float Trimrudder = 0.0;
 
+
 // トリムを反映してサーボ上下限を再計算
 void updateServoLimits() {
   ElevatorDegMin = ElevatorDegMinInit + Trimelevetor;  // 機種下げ
@@ -301,46 +302,86 @@ void Potentiometer() {
 }
 
 unsigned long lastPushed = millis();  //ボタン4チャタリング防止用
-int is_buttun3 = 0;                   //ボタン3長押し検知用
-int lastTrimE = 0;
+
+// ニュートラル帯(2000..2300): 長押しはイン帯フレーム数、単押しは帯外が安定してから確定(@30Hz想定)
+static const int NEUTRAL_LONG_PRESS_FRAMES = 20;       // >20 で発火（21 フレーム ≒ 0.7s）
+static const int NEUTRAL_RELEASE_STABLE_FRAMES = 8;    // 帯外がこれ以上続けば離し確定（≒ 0.27s）
+static bool neutralStrokeActive = false;
+static bool neutralLongPressDone = false;
+static int neutralBandHoldFrames = 0;
+static int neutralOutsideStableFrames = 0;
+static bool neutralWasInBand = false;
+
+static void resetNeutralGesture() {
+  neutralStrokeActive = false;
+  neutralLongPressDone = false;
+  neutralBandHoldFrames = 0;
+  neutralOutsideStableFrames = 0;
+  neutralWasInBand = false;
+}
 
 void trimElevetor() {
   int TrimE = analogRead(trimE);
+  const bool inNeutralBand = (2000 <= TrimE && TrimE <= 2300);
 
   if (0 <= TrimE && TrimE <= 100) {  //優先度1
+    resetNeutralGesture();
     Trimelevetor = Trimelevetor + 1;
     settingsChanged = true;
 
   } else if (1000 <= TrimE && TrimE <= 1200) {  // 優先度2
+    resetNeutralGesture();
     Trimelevetor = Trimelevetor - 1;
     settingsChanged = true;
 
-  } else if (2000 <= TrimE && TrimE <= 2300) {  //優先度3
-    is_buttun3 += 1;
-    if (is_buttun3 > 20) {
+  } else if (inNeutralBand) {
+    neutralOutsideStableFrames = 0;
+    if (!neutralWasInBand) {
+      neutralBandHoldFrames = 1;
+    } else {
+      neutralBandHoldFrames++;
+    }
+    neutralWasInBand = true;
+
+    if (!neutralStrokeActive) {
+      neutralStrokeActive = true;
+      neutralLongPressDone = false;
+    }
+
+    if (neutralBandHoldFrames > NEUTRAL_LONG_PRESS_FRAMES && !neutralLongPressDone) {
+      neutralLongPressDone = true;
+      neutralBandHoldFrames = 0;
       neutralTrimeEle = Trimelevetor;
-      is_buttun3 = 0;
       settingsChanged = true;
       xTaskCreate(Ltika, "Ltika", 1024, NULL, 9, NULL);
     }
 
-  } else if (is_buttun3 > 0 && !(2000 <= TrimE && TrimE <= 2300)) {
-    Trimelevetor = neutralTrimeEle;
-    is_buttun3 = 0;
-    settingsChanged = true;
-
   } else if (3300 <= TrimE && TrimE <= 3500 && millis() - lastPushed > 250) {  //優先度4
+    resetNeutralGesture();
     is_pid = !is_pid;
     lastPushed = millis();
   } else {
-    is_buttun3 = 0;
-    // ボタンが離された瞬間に変更があれば保存
+    neutralWasInBand = false;
+
+    if (neutralStrokeActive) {
+      neutralBandHoldFrames = 0;
+      neutralOutsideStableFrames++;
+      if (neutralOutsideStableFrames >= NEUTRAL_RELEASE_STABLE_FRAMES) {
+        if (!neutralLongPressDone) {
+          Trimelevetor = neutralTrimeEle;
+          settingsChanged = true;
+        }
+        resetNeutralGesture();
+      }
+    } else {
+      neutralOutsideStableFrames = 0;
+    }
+
     if (settingsChanged && nvmTaskHandle != NULL) {
       xTaskNotifyGive(nvmTaskHandle);
       settingsChanged = false;
     }
   }
-  lastTrimE = TrimE;
 }
 
 int lastTrimR1 = LOW;

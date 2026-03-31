@@ -74,29 +74,35 @@ def main():
     degree = 5  # 指定の通り、5次多項式で近似
     
     print(f"--- {degree}次多項式でデータを近似 ---")
-    coefficients, poly_func = fit_polynomial(x_data, y_data, degree)
-    
+    # 近似の入力と出力を定義（ここを入れ替えれば全体が追従する）
+    fit_input = y_data   # 横軸（多項式の入力）
+    fit_output = x_data  # 縦軸（多項式の出力）
+    input_label = 'y'
+    output_label = 'x'
+
+    coefficients, poly_func = fit_polynomial(fit_input, fit_output, degree)
+
     print("近似された係数 (高次から順):")
     for i, coef in enumerate(coefficients):
-        print(f"  x^{degree - i} の係数: {coef:.4f}")
-        
-    print("\n生成された多項式:")
+        print(f"  {input_label}^{degree - i} の係数: {coef:.4f}")
+
+    print(f"\n生成された多項式 ({input_label} → {output_label}):")
     print(poly_func)
-    
+
     # 3. 結果の可視化 (Matplotlib)
     # 元データを散布図として描画
-    plt.scatter(x_data, y_data, label='Original Data (input.csv)', color='blue', alpha=0.5, s=10)
-    
-    # 近似曲線をプロットするための滑らかなx座標の配列を作成
-    x_fit = np.linspace(min(x_data), max(x_data), 500)
-    y_fit = poly_func(x_fit)
-    
+    plt.scatter(fit_input, fit_output, label='Original Data (input.csv)', color='blue', alpha=0.5, s=10)
+
+    # 近似曲線をプロットするための滑らかな座標の配列を作成
+    input_fit = np.linspace(min(fit_input), max(fit_input), 500)
+    output_fit = poly_func(input_fit)
+
     # 近似曲線を描画
-    plt.plot(x_fit, y_fit, label=f'Fitted Polynomial (degree={degree})', color='red', linewidth=2)
-    
-    plt.xlabel('x')
-    plt.ylabel('y')
-    plt.title(f'Polynomial Regression (n={degree})')
+    plt.plot(input_fit, output_fit, label=f'Fitted Polynomial (degree={degree})', color='red', linewidth=2)
+
+    plt.xlabel(input_label)
+    plt.ylabel(output_label)
+    plt.title(f'Polynomial Regression (n={degree}, {input_label} → {output_label})')
     plt.legend()
     plt.grid(True)
     plt.show()
