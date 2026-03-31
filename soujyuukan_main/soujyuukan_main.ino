@@ -5,23 +5,21 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLE2902.h>
+#include "PidState.h"
 
 // BLE設定
 #define SERVICE_UUID "AAAA0001-1fb5-459e-8fcc-c5c9c331914b"
 #define CHAR_UUID    "AAAA0002-36e1-4688-b7f5-ea07361b26a8"
 
 #pragma pack(push, 1)
-struct ControlToTest {
-  int16_t rawEle;
-  int16_t rawRud;
-  int16_t servoE;
-  int16_t servoR;
-  int16_t getposE;
-  int16_t getposR;
+struct ControlData {
+  float E_steer, R_steer;
+  float E_trim, E_angle, R_angle;
+  float e_servo_temp, r_servo_temp;
+  char control_mode[12];
 };
-struct TestToControl {
+struct NavigationData {
   float pitch;
-  float yaw;
 };
 #pragma pack(pop)
 
@@ -40,15 +38,13 @@ class MyServerCallbacks : public BLEServerCallbacks {
   }
 };
 volatile float currentPitch = 0.0;  // 姿勢角（ピッチ）[°]
-volatile float currentYaw = 0.0;    // 姿勢角（ヨー）[°]
 class MyCharCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic* pChar) {
     uint8_t* data = pChar->getData();
     size_t len = pChar->getLength();
-    if (len == sizeof(TestToControl)) {
-      TestToControl* incoming = (TestToControl*)data;
+    if (len == sizeof(NavigationData)) {
+      NavigationData* incoming = (NavigationData*)data;
       currentPitch = incoming->pitch;
-      currentYaw = incoming->yaw;
     }
   }
 };
@@ -111,14 +107,7 @@ void updateServoLimits() {
 }
 int is_pid = 0;  //今PID制御をONにするかどうか(0か1)
 
-// PID制御の状態
-struct PidState {
-  float kp, ki, kd;
-  float integral;
-  float integralMax;
-  float lastError;
-  unsigned long lastTime;
-};
+// PidState は PidState.h で定義
 PidState pidElevator;
 PidState pidRudder;         //一応ラダーも用意しているが、今回はラダーに関するオートパイロットは行わない
 
@@ -372,6 +361,10 @@ void trimRudder() {
   lastTrimR2 = nowTrimR2;
 }
 
+float cachedTempE = 0.0;  // エレベータサーボ温度キャッシュ
+float cachedTempR = 0.0;  // ラダーサーボ温度キャッシュ
+int tempReadCounter = 0;
+
 const long frequency = 30;
 void mainloop(void *pvParameters) {
   const TickType_t xFrequency = (1000 / frequency) / portTICK_PERIOD_MS;
@@ -418,25 +411,38 @@ void mainloop(void *pvParameters) {
     int krsE = (int)fmap(degE, ElevatorDegMin, ElevatorDegMax, KrsElevatorMin, KrsElevatorMax);
     int krsR = (int)fmap(degR, RudderDegMin, RudderDegMax, KrsRudderMin, KrsRudderMax);
 
-    int setpos0 = krs.setPos(0, krsR);
-    int setpos1 = krs.setPos(1, krsE);
-    int getposE = krs.getPos(0);
-    int getposR = krs.getPos(1);
+    int setpos0 = krs.setPos(0, krsR);  // ラダー
+    int setpos1 = krs.setPos(1, krsE);  // エレベータ
+    int getpos0 = krs.getPos(0);        // ラダー実位置
+    int getpos1 = krs.getPos(1);        // エレベータ実位置
+
+    // サーボ温度取得（1秒に1回）
+    tempReadCounter++;
+    if (tempReadCounter >= 30) {
+      int rawTmpE = krs.getTmp(1);  // エレベータ
+      int rawTmpR = krs.getTmp(0);  // ラダー
+      if (rawTmpE != -1) cachedTempE = (float)rawTmpE;
+      if (rawTmpR != -1) cachedTempR = (float)rawTmpR;
+      tempReadCounter = 0;
+    }
 
     // BLE送信
     if (bleConnected && pCharacteristic != NULL) {
-      ControlToTest txData;
-      txData.rawEle = (int16_t)rawEle;
-      txData.rawRud = (int16_t)rawRud;
-      txData.servoE = (int16_t)krsE;
-      txData.servoR = (int16_t)krsR;
-      txData.getposE = (int16_t)getposE;
-      txData.getposR = (int16_t)getposR;
-      pCharacteristic->setValue((uint8_t*)&txData, sizeof(ControlToTest));
+      ControlData txData;
+      txData.E_steer = degE;
+      txData.R_steer = degR;
+      txData.E_trim = Trimelevetor;
+      txData.E_angle = (getpos1 != -1) ? (float)(getpos1 - 7500) * (135.0f / 4000.0f) : 0.0f;
+      txData.R_angle = (getpos0 != -1) ? (float)(getpos0 - 7500) * (135.0f / 4000.0f) : 0.0f;
+      txData.e_servo_temp = cachedTempE;
+      txData.r_servo_temp = cachedTempR;
+      memset(txData.control_mode, 0, sizeof(txData.control_mode));
+      strncpy(txData.control_mode, is_pid ? "assisted" : "manual", sizeof(txData.control_mode) - 1);
+      pCharacteristic->setValue((uint8_t*)&txData, sizeof(ControlData));
       pCharacteristic->notify();
     }
 
-    Serial.printf("E:%.1f R:%.1f krs:%d,%d raw:%d,%d getPos:%d,%d pitch%f pid%f \n", degE, degR, krsE, krsR, rawEle, rawRud, getposE, getposR,currentPitch,tempDegE);
+    Serial.printf("E:%.1f R:%.1f krs:%d,%d raw:%d,%d getPos:%d,%d pitch:%.1f pid:%.1f\n", degE, degR, krsE, krsR, rawEle, rawRud, getpos0, getpos1, currentPitch, tempDegE);
 
 
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
