@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "WebSearch",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(git -C \"C:\\\\Users\\\\baiji\\\\OneDrive\\\\ドキュメント\\\\Arduino\\\\control_stick\\\\soujyuukan_main\" status)",
+      "Bash(git -C \"C:\\\\Users\\\\baiji\\\\OneDrive\\\\ドキュメント\\\\Arduino\\\\control_stick\\\\soujyuukan_main\" log --pretty=format:\"%h %ci %s\" -15)",
+      "Bash(git -C \"C:\\\\Users\\\\baiji\\\\OneDrive\\\\ドキュメント\\\\Arduino\\\\control_stick\\\\soujyuukan_main\" rev-parse --show-toplevel)",
+      "Bash(git -C \"C:\\\\Users\\\\baiji\\\\OneDrive\\\\ドキュメント\\\\Arduino\\\\control_stick\\\\soujyuukan_main\" diff --stat)"
     ]
   }
 }

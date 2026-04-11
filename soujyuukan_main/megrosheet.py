@@ -15,6 +15,28 @@ def fit_polynomial(x, y, degree):
     
     return coefficients, poly_func
 
+
+def polynomial_to_pow_expr(coefficients, var_name="x"):
+    """polyfit 係数（高次から）を coef*pow(var, n)+... 形式の1行に整形（Arduino 等へコピペ用）。"""
+    ncoef = len(coefficients)
+    degree = ncoef - 1
+    parts = []
+    for i, c in enumerate(coefficients):
+        p = degree - i
+        cs = f"{c:.12g}"
+        if p == 0:
+            parts.append(cs)
+        else:
+            parts.append(f"{cs}*pow({var_name}, {p})")
+    expr = parts[0]
+    for s in parts[1:]:
+        if s.startswith("-"):
+            expr += " - " + s[1:].lstrip()
+        else:
+            expr += " + " + s
+    return expr
+
+
 def main():
     # 1. input.csv からデータの読み込み
     csv_file = 'input.csv'
@@ -70,15 +92,14 @@ def main():
         print(f"データの読み込み中にエラーが発生しました: {e}")
         return
     
-    # 2. 多項式近似の実行
-    degree = 5  # 指定の通り、5次多項式で近似
+    # 2. 多項式近似の実行（x=舵角 → y=サーボ角）
+    degree = 5
     
     print(f"--- {degree}次多項式でデータを近似 ---")
-    # 近似の入力と出力を定義（ここを入れ替えれば全体が追従する）
-    fit_input = y_data   # 横軸（多項式の入力）
-    fit_output = x_data  # 縦軸（多項式の出力）
-    input_label = 'y'
-    output_label = 'x'
+    fit_input = x_data   # 多項式の入力（横軸）
+    fit_output = y_data  # 多項式の出力（縦軸）
+    input_label = 'x'
+    output_label = 'y'
 
     coefficients, poly_func = fit_polynomial(fit_input, fit_output, degree)
 
@@ -88,6 +109,8 @@ def main():
 
     print(f"\n生成された多項式 ({input_label} → {output_label}):")
     print(poly_func)
+    print("\nコピペ用 (pow 形式):")
+    print(polynomial_to_pow_expr(coefficients, input_label))
 
     # 3. 結果の可視化 (Matplotlib)
     # 元データを散布図として描画

@@ -7,7 +7,7 @@ from matplotlib.figure import Figure
 import serial
 import csv
 
-PORT = "COM7"
+PORT = "COM11"
 BAUD = 115200
 
 class KrsTestApp:
@@ -31,13 +31,28 @@ class KrsTestApp:
         top = ttk.Frame(self.root, padding=5)
         top.pack(fill=tk.X)
 
-        ttk.Label(top, text="コマンド:").pack(side=tk.LEFT)
-        self.cmd_entry = ttk.Entry(top, width=12)
-        self.cmd_entry.pack(side=tk.LEFT, padx=3)
-        self.cmd_entry.bind("<Return>", lambda e: self.send_command())
+        self.cmd_type = tk.StringVar(value="e")
+        cb = ttk.Combobox(top, textvariable=self.cmd_type, values=["e", "r"], width=2, state="readonly")
+        cb.pack(side=tk.LEFT, padx=3)
+
+        ttk.Label(top, text="値:").pack(side=tk.LEFT)
+        self.val_entry = ttk.Entry(top, width=8)
+        self.val_entry.insert(0, "7500")
+        self.val_entry.pack(side=tk.LEFT, padx=3)
+        self.val_entry.bind("<Return>", lambda e: self.send_command())
 
         self.send_btn = ttk.Button(top, text="送信", command=self.send_command)
         self.send_btn.pack(side=tk.LEFT, padx=3)
+
+        ttk.Label(top, text="ステップ数:").pack(side=tk.LEFT, padx=(10, 0))
+        self.step_var = tk.IntVar(value=10)
+        self.step_entry = ttk.Entry(top, textvariable=self.step_var, width=5)
+        self.step_entry.pack(side=tk.LEFT, padx=3)
+
+        self.plus_btn = ttk.Button(top, text="+", width=2, command=self.step_up)
+        self.plus_btn.pack(side=tk.LEFT, padx=1)
+        self.minus_btn = ttk.Button(top, text="-", width=2, command=self.step_down)
+        self.minus_btn.pack(side=tk.LEFT, padx=1)
 
         ttk.Label(top, text="閾値:").pack(side=tk.LEFT, padx=(15, 0))
         self.threshold_var = tk.IntVar(value=20)
@@ -66,23 +81,41 @@ class KrsTestApp:
                                    state=tk.DISABLED)
         self.save_btn.pack(side=tk.LEFT)
 
-    def send_command(self):
-        cmd = self.cmd_entry.get().strip()
-        if not cmd:
-            return
-        c = cmd[0].lower()
-        if c not in ('e', 'r'):
-            self.status_var.set("Error: e or r")
-            return
+    def step_up(self):
+        self._apply_step(1)
+
+    def step_down(self):
+        self._apply_step(-1)
+
+    def _apply_step(self, sign):
         try:
-            val = int(cmd[1:])
+            current_val = int(self.val_entry.get().strip())
+            step_val = self.step_var.get()
+        except ValueError:
+            self.status_var.set("Error: invalid number")
+            return
+            
+        new_val = current_val + (sign * step_val)
+        self.val_entry.delete(0, tk.END)
+        self.val_entry.insert(0, str(new_val))
+        self.send_command()
+
+    def send_command(self):
+        try:
+            val = int(self.val_entry.get().strip())
         except ValueError:
             self.status_var.set("Error: invalid number")
             return
 
+        c = self.cmd_type.get()
+        cmd = f"{c}{val}"
+
         # 前回のストリーミング停止
         if self.recording:
-            self.ser.write(b"s\n")
+            try:
+                self.ser.write(b"s\n")
+            except Exception:
+                pass
 
         self.times.clear()
         self.positions.clear()
@@ -91,8 +124,12 @@ class KrsTestApp:
         self.save_btn.config(state=tk.DISABLED)
         self.status_var.set("Recording...")
 
-        self.ser.reset_input_buffer()
-        self.ser.write((cmd + "\n").encode())
+        try:
+            self.ser.reset_input_buffer()
+            self.ser.write((cmd + "\n").encode())
+        except Exception:
+            self.status_var.set("Serial ERROR")
+            return
 
         self.start_polling()
         self.start_graph_update()
@@ -104,12 +141,15 @@ class KrsTestApp:
 
     def poll_serial(self):
         try:
-            while self.ser.in_waiting:
+            # GUIがフリーズしないよう1ループ最大100行までに制限
+            reads = 0
+            while self.ser.in_waiting and reads < 100:
                 raw = self.ser.readline()
                 if not raw:
                     break
+                reads += 1
                 line = raw.decode("utf-8", errors="replace").strip()
-                if line.startswith("D:"):
+                if line.startswith("D:") and self.recording:
                     parts = line[2:].split(",")
                     if len(parts) == 2:
                         t = int(parts[0])
@@ -117,18 +157,18 @@ class KrsTestApp:
                         self.times.append(t)
                         self.positions.append(pos)
 
-                        if self.recording and self.check_settled():
+                        if self.check_settled():
                             self.stop_recording()
-                            return
         except Exception:
             pass
 
-        if self.recording:
-            # 5秒強制停止
-            if self.times and self.times[-1] > 5000:
-                self.stop_recording()
-                return
-            self.poll_id = self.root.after(20, self.poll_serial)
+        # 5秒強制停止のチェック
+        if self.recording and self.times and self.times[-1] > 5000:
+            self.stop_recording()
+
+        # 常にバックグラウンドでバッファを空にするためポーリングは継続する
+        interval = 20 if self.recording else 100
+        self.poll_id = self.root.after(interval, self.poll_serial)
 
     def start_graph_update(self):
         if self.graph_id:

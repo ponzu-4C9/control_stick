@@ -67,24 +67,38 @@ const int trimR2 = 10;         //トリムラダー
 /*
 ここがめっちゃ重要。詳しくは同じディレクトリにある。.docsを参照
 */
-// サーボ角度上下限 初期値 [°]
-const float ElevatorDegMinInit = -87;  // 機種下げ
-const float ElevatorDegMaxInit = -28;   // 機種上げ
-const float RudderDegMaxInit = 135;     // ラダー右
 
-// サーボ角度上下限（トリム反映後）
-float ElevatorDegMin;
-float ElevatorDegMax;
-float ElevatorDegMed;
-float RudderDegMax;
-float RudderDegMin;
+// 実舵角 x[°]（分度器）→ KRS（多項式本体・逆映射用はクランプなし）
+static float elePoly(float x) {
+  return -0.00784093824524*pow(x, 5) - 0.0831310422078*pow(x, 4) - 0.111246590934*pow(x, 3) + 0.426004125598*pow(x, 2) - 178.054343195*pow(x, 1) + 5265.64531822;
+}
+float ele2krs(float x) {
+  return constrain(elePoly(x), 3500.f, 8130.f);
+}
 
-// 近藤サーボKRS値上下限（度数→KRS変換用）
-// 角度からKRS値(3500〜11500)への変換式: KRS値 = (角度 / 0.03375) + 7500
-int KrsElevatorMax;
-int KrsElevatorMin;
-int KrsRudderMax;
-int KrsRudderMin;
+static float rudPoly(float x) {
+  return 0.0201216138866*pow(x, 5) - 0.0907370175209*pow(x, 4) - 1.17112171346*pow(x, 3) + 5.12937259583*pow(x, 2) + 192.592279427*pow(x, 1) + 9256.78728843;
+}
+float rud2krs(float x) {
+  return constrain(rudPoly(x), 3500.f, 11500.f);
+}
+
+//KRS→ 舵角に変換する関数
+float krs2ele(float x) {
+  x = -4.18296106181e-18*pow(x, 5) + 1.12850971768e-13*pow(x, 4) - 8.81455265532e-10*pow(x, 3) + 7.90205839648e-07*pow(x, 2) + 0.00938552289398*pow(x, 1) - 9.46985417159;
+  return constrain(x, -5, 5);
+}
+float krs2rud(float x) {
+  x = -4.18296106181e-18*pow(x, 5) + 1.12850971768e-13*pow(x, 4) - 8.81455265532e-10*pow(x, 3) + 7.90205839648e-07*pow(x, 2) + 0.00938552289398*pow(x, 1) - 9.46985417159;
+  return constrain(x, -10, 10);
+}
+
+// 舵角上下限
+float ElevatorDegMin = -5;
+float ElevatorDegMed = 0;
+float ElevatorDegMax = 5;
+float RudderDegMin = -10;
+float RudderDegMax = 10;
 
 IcsHardSerialClass krs(&Serial0, EN_PIN, BAUDRATE, TIMEOUT);  //インスタンス＋ENピン(8番ピン)およびUARTの指定
 
@@ -94,18 +108,6 @@ float neutralTrimeEle = 0.0;
 float Trimrudder = 0.0;
 
 
-// トリムを反映してサーボ上下限を再計算
-void updateServoLimits() {
-  ElevatorDegMin = ElevatorDegMinInit + Trimelevetor;  // 機種下げ
-  ElevatorDegMax = ElevatorDegMaxInit + Trimelevetor;   // 機種上げ
-  ElevatorDegMed = (ElevatorDegMin + ElevatorDegMax) / 2;
-  RudderDegMax = RudderDegMaxInit + Trimrudder;     // ラダー右
-  RudderDegMin = RudderDegMax - 76.3 * 2;              // ラダー左
-  KrsElevatorMax = (ElevatorDegMax / (135.0/4000)) + 7500;
-  KrsElevatorMin = (ElevatorDegMin / (135.0/4000)) + 7500;
-  KrsRudderMax = (RudderDegMax / (135.0/4000)) + 7500;
-  KrsRudderMin = (RudderDegMin / (135.0/4000)) + 7500;
-}
 int is_pid = 0;  //今PID制御をONにするかどうか(0か1)
 
 // PidState は PidState.h で定義
@@ -277,6 +279,10 @@ int rudHistory[hisSize]={0};
 int prefELE = 0;
 int prefRud = 0;
 int is_center = 0;
+// detzone へ入れる直前のフィルタ済み ADC（BLE の E_steer/R_steer 用）
+int g_filteredEleAdc = 0;
+int g_filteredRudAdc = 0;
+
 void Potentiometer() {
 
   for (int i = 0;i < hisSize-1;i++){
@@ -296,6 +302,9 @@ void Potentiometer() {
 
   int fRUD = RUD*alfa + prefRud*(1-alfa);
   prefRud = fRUD;
+
+  g_filteredEleAdc = fELE;
+  g_filteredRudAdc = fRUD;
 
   is_center = detzoneMapping(elergs, fELE, &elevetor, ElevatorDegMax, ElevatorDegMed, ElevatorDegMin);
   detzoneMapping(rudrgs, fRUD, &rudder, RudderDegMin, (RudderDegMin+RudderDegMax)/2, RudderDegMax);
@@ -326,12 +335,12 @@ void trimElevetor() {
 
   if (0 <= TrimE && TrimE <= 100) {  //優先度1
     resetNeutralGesture();
-    Trimelevetor = Trimelevetor + 1;
+    Trimelevetor = Trimelevetor + 0.1;
     settingsChanged = true;
 
   } else if (1000 <= TrimE && TrimE <= 1200) {  // 優先度2
     resetNeutralGesture();
-    Trimelevetor = Trimelevetor - 1;
+    Trimelevetor = Trimelevetor - 0.1;
     settingsChanged = true;
 
   } else if (inNeutralBand) {
@@ -347,7 +356,7 @@ void trimElevetor() {
       neutralStrokeActive = true;
       neutralLongPressDone = false;
     }
-
+    //Serial.printf("neutralBandHoldFrames%d neutralLongPressDone:%d\n",neutralBandHoldFrames,neutralLongPressDone);
     if (neutralBandHoldFrames > NEUTRAL_LONG_PRESS_FRAMES && !neutralLongPressDone) {
       neutralLongPressDone = true;
       neutralBandHoldFrames = 0;
@@ -384,22 +393,18 @@ void trimElevetor() {
   }
 }
 
-int lastTrimR1 = LOW;
-int lastTrimR2 = LOW;
 void trimRudder() {
   int nowTrimR1 = digitalRead(trimR1);
   int nowTrimR2 = digitalRead(trimR2);
 
-  if (nowTrimR1 == HIGH && lastTrimR1 == LOW) {
-    Trimrudder = Trimrudder + 5;
-    if (nvmTaskHandle != NULL) xTaskNotifyGive(nvmTaskHandle);
+  if (nowTrimR1 == HIGH) {
+    Trimrudder = Trimrudder + 0.1;
+    settingsChanged = true;
   }
-  if (nowTrimR2 == HIGH && lastTrimR2 == LOW) {
-    Trimrudder = Trimrudder - 5;
-    if (nvmTaskHandle != NULL) xTaskNotifyGive(nvmTaskHandle);
+  if (nowTrimR2 == HIGH) {
+    Trimrudder = Trimrudder - 0.1;
+    settingsChanged = true;
   }
-  lastTrimR1 = nowTrimR1;
-  lastTrimR2 = nowTrimR2;
 }
 
 float cachedTempE = 0.0;  // エレベータサーボ温度キャッシュ
@@ -416,41 +421,33 @@ void mainloop(void *pvParameters) {
     trimElevetor();
     trimRudder();
 
-    float degE = elevetor;
-    float degR = rudder;
-
-    //上下限更新
-    updateServoLimits();
+    float degE = elevetor + Trimelevetor;
+    float degR = rudder + Trimrudder;
 
 
     float errorE = 0.0 - currentPitch;
-    float tempDegE = pidCompute(&pidElevator, errorE);
     /*
-    tempDegEについて、
-    これは-10から10をとる値で、これはそのまま舵角を表す。
+    tempDegE は PID 出力（舵角オフセット相当）。is_center のときだけ積分・出力を更新。
+    LED は PID モード ON の合図。中立外で is_pid を落とすとボタン押下と無関係に消灯するため、
+    中立外は手動舵角のままモードだけ維持し、積分はリセットしてウィンドアップを防ぐ。
     */
-    //本番はこれを下記のif文に変更
+    float tempDegE = 0.0f;
+    int krsE = ele2krs(degE);
+    int krsR = rud2krs(degR);
+
     if (is_pid) {
-      if(is_center){
-        digitalWrite(LED, HIGH);
-        degE = -0.000208*pow(tempDegE,5)- 0.0001122*pow(tempDegE,4) - 0.003882*pow(tempDegE,3) - 0.0145*pow(tempDegE,2) - 5.812* tempDegE - 58.46 + Trimelevetor;
-      }else{
-        is_pid = 0;
+      digitalWrite(LED, HIGH);
+      if (is_center) {
+        tempDegE = (float)pidCompute(&pidElevator, errorE);
+        krsE = ele2krs(tempDegE + Trimelevetor);
+      } else {
         pidReset(&pidElevator);
-        digitalWrite(LED, LOW);
       }
     } else {
       digitalWrite(LED, LOW);
       pidReset(&pidElevator);
     }
 
-    // クリッピング [°]
-    degE = constrain(degE, ElevatorDegMin, ElevatorDegMax);
-    degR = constrain(degR, RudderDegMin, RudderDegMax);
-
-    // 度数 → 近藤KRS値に変換
-    int krsE = (int)fmap(degE, ElevatorDegMin, ElevatorDegMax, KrsElevatorMin, KrsElevatorMax);
-    int krsR = (int)fmap(degR, RudderDegMin, RudderDegMax, KrsRudderMin, KrsRudderMax);
 
     int setpos0 = krs.setPos(0, krsR);  // ラダー
     int setpos1 = krs.setPos(1, krsE);  // エレベータ
@@ -468,13 +465,19 @@ void mainloop(void *pvParameters) {
     }
 
     // BLE送信
+    // E_steer/R_steer: 中央値＋ローパス後の ADC をレバー歪みを [-30,30] に線形正規化
+    // E_trim: トリム角だけを ele2krs に通した「絶対 KRS」（中立補正量が欲しい場合は ele2krs(0) との差を検討）
+    // E_angle/R_angle: getPos の KRS から多項式の逆映射で実舵角[°]（分度器と同じ定義）
+    // e_servo_temp / r_servo_temp: 近藤 ICS getTmp の戻り値。仕様上は摂氏[℃]（公式マニュアルで最終確認推奨）
     if (bleConnected && pCharacteristic != NULL) {
       ControlData txData;
-      txData.E_steer = degE;
-      txData.R_steer = degR;
+      float adcE = constrain((float)g_filteredEleAdc, (float)elergs[0], (float)elergs[3]);
+      float adcR = constrain((float)g_filteredRudAdc, (float)rudrgs[0], (float)rudrgs[3]);
+      txData.E_steer = fmap(adcE, (float)elergs[0], (float)elergs[3], -30.f, 30.f);
+      txData.R_steer = fmap(adcR, (float)rudrgs[0], (float)rudrgs[3], -30.f, 30.f);
       txData.E_trim = Trimelevetor;
-      txData.E_angle = (getpos1 != -1) ? (float)(getpos1 - 7500) * (135.0f / 4000.0f) : 0.0f;
-      txData.R_angle = (getpos0 != -1) ? (float)(getpos0 - 7500) * (135.0f / 4000.0f) : 0.0f;
+      txData.E_angle = (getpos1 != -1) ? krs2ele((float)getpos1) : 0.f;
+      txData.R_angle = (getpos0 != -1) ? krs2rud((float)getpos0) : 0.f;
       txData.e_servo_temp = cachedTempE;
       txData.r_servo_temp = cachedTempR;
       memset(txData.control_mode, 0, sizeof(txData.control_mode));
@@ -492,12 +495,9 @@ void mainloop(void *pvParameters) {
 }
 
 void setup() {
-  Serial.begin(115200);
-  Serial.println("System Booting..."); // これが見えれば大成功！
 
   // 設定の読み込み
   loadSettings();
-  updateServoLimits();  // トリム初期値でサーボ上下限を設定
 
   krs.begin();
   krs.setSpd(0, 127);
