@@ -70,7 +70,7 @@ const int trimR2 = 10;         //トリムラダー
 
 // 実舵角 x[°]（分度器）→ KRS（多項式本体・逆映射用はクランプなし）
 static float elePoly(float x) {
-  return -0.00784093824524*pow(x, 5) - 0.0831310422078*pow(x, 4) - 0.111246590934*pow(x, 3) + 0.426004125598*pow(x, 2) - 178.054343195*pow(x, 1) + 5265.64531822;
+  return 0.00784093824524*pow(x, 5) - 0.0831310422078*pow(x, 4) + 0.111246590934*pow(x, 3) + 0.426004125598*pow(x, 2) + 178.054343195*pow(x, 1) + 5265.64531822;
 }
 float ele2krs(float x) {
   return constrain(elePoly(x), 3500.f, 8130.f);
@@ -97,8 +97,8 @@ float krs2rud(float x) {
 float ElevatorDegMin = -5;
 float ElevatorDegMed = 0;
 float ElevatorDegMax = 5;
-float RudderDegMin = -10;
-float RudderDegMax = 10;
+float RudderDegMin = -9.3;
+float RudderDegMax = 9.8;
 
 IcsHardSerialClass krs(&Serial0, EN_PIN, BAUDRATE, TIMEOUT);  //インスタンス＋ENピン(8番ピン)およびUARTの指定
 
@@ -496,6 +496,7 @@ void mainloop(void *pvParameters) {
 
 void setup() {
 
+  Serial.begin(115);
   // 設定の読み込み
   loadSettings();
 
