@@ -29,11 +29,11 @@ bool bleConnected = false;
 class MyServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) {
     bleConnected = true;
-    Serial.println("BLE: connected");
+    Serial.printf("[%lu] BLE: connected\n", millis());
   }
   void onDisconnect(BLEServer* pServer) {
     bleConnected = false;
-    Serial.println("BLE: disconnected");
+    Serial.printf("[%lu] BLE: disconnected, restart advertising\n", millis());
     pServer->getAdvertising()->start();
   }
 };
@@ -496,7 +496,8 @@ void mainloop(void *pvParameters) {
 
 void setup() {
 
-  Serial.begin(115);
+  Serial.begin(115200);
+  Serial.printf("[%lu] setup: enter\n", millis());
   // 設定の読み込み
   loadSettings();
 
@@ -516,7 +517,9 @@ void setup() {
   pidInit(&pidRudder, 1.0, 0.1, 0.05, 30.0);
 
   // BLE初期化
+  Serial.printf("[%lu] BLE: init begin\n", millis());
   BLEDevice::init("C3-CONTROL");
+  Serial.printf("[%lu] BLE: init done\n", millis());
   BLEServer* pServer = BLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
   BLEService* pService = pServer->createService(SERVICE_UUID);
@@ -530,7 +533,7 @@ void setup() {
   pCharacteristic->setCallbacks(new MyCharCallbacks());
   pService->start();
   pServer->getAdvertising()->start();
-  Serial.println("BLE: advertising as C3-CONTROL");
+  Serial.printf("[%lu] BLE: advertising as C3-CONTROL\n", millis());
 
   // 各タスクの生成
   xTaskCreate(nvmTask, "nvmTask", 4096, NULL, 2, &nvmTaskHandle);
