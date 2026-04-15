@@ -69,18 +69,12 @@ const int trimR2 = 10;         //トリムラダー
 */
 
 // 実舵角 x[°]（分度器）→ KRS（多項式本体・逆映射用はクランプなし）
-static float elePoly(float x) {
+static float ele2krs(float x) {
   return 0.012577102329*pow(x, 5) + 0.0194099102747*pow(x, 4) - 0.634353764183*pow(x, 3) - 0.815828278465*pow(x, 2) + 185.794437174*pow(x, 1) + 5701.22753031;
 }
-float ele2krs(float x) {
-  return constrain(elePoly(x), 3500.f, 11500.f);
-}
 
-static float rudPoly(float x) {
+static float rud2krs(float x) {
   return -0.0105114837351*pow(x, 5) - 0.0659075647903*pow(x, 4) + 0.241297817826*pow(x, 3) + 2.97624922026*pow(x, 2) - 179.910899851*pow(x, 1) + 6563.03984539;
-}
-float rud2krs(float x) {
-  return constrain(rudPoly(x), 3500.f, 11500.f);
 }
 
 //KRS→ 舵角に変換する関数
@@ -97,8 +91,8 @@ float krs2rud(float x) {
 float ElevatorDegMin = -5;
 float ElevatorDegMed = 0;
 float ElevatorDegMax = 5;
-float RudderDegMin = -9.3;
-float RudderDegMax = 9.8;
+float RudderDegMin = -10.1;
+float RudderDegMax = 9.3;
 
 IcsHardSerialClass krs(&Serial0, EN_PIN, BAUDRATE, TIMEOUT);  //インスタンス＋ENピン(8番ピン)およびUARTの指定
 
@@ -466,7 +460,7 @@ void mainloop(void *pvParameters) {
 
     // BLE送信
     // E_steer/R_steer: 中央値＋ローパス後の ADC をレバー歪みを [-30,30] に線形正規化
-    // E_trim: トリム角だけを ele2krs に通した「絶対 KRS」（中立補正量が欲しい場合は ele2krs(0) との差を検討）
+    // E_trim: エレベータのトリム角 [°]（KRS に変換する前の生の度数値を送信）
     // E_angle/R_angle: getPos の KRS から多項式の逆映射で実舵角[°]（分度器と同じ定義）
     // e_servo_temp / r_servo_temp: 近藤 ICS getTmp の戻り値。仕様上は摂氏[℃]（公式マニュアルで最終確認推奨）
     if (bleConnected && pCharacteristic != NULL) {
