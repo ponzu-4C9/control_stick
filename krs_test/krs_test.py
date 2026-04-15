@@ -7,7 +7,7 @@ from matplotlib.figure import Figure
 import serial
 import csv
 
-PORT = "COM11"
+PORT = "COM9"
 BAUD = 115200
 
 class KrsTestApp:

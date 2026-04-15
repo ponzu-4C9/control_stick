@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+import sys
 
 def fit_polynomial(x, y, degree):
     """
@@ -38,11 +39,12 @@ def polynomial_to_pow_expr(coefficients, var_name="x"):
 
 
 def main():
-    # 1. input.csv からデータの読み込み
-    csv_file = 'input.csv'
-    
+    # 1. CSV ファイルの指定（第1引数で指定、省略時は input.csv）
+    csv_file = sys.argv[1] if len(sys.argv) > 1 else 'input.csv'
+
     if not os.path.exists(csv_file):
         print(f"エラー: {csv_file} が見つかりません。")
+        print(f"使い方: python {os.path.basename(sys.argv[0])} [csv_file]")
         return
     
     x_data = []
@@ -114,7 +116,7 @@ def main():
 
     # 3. 結果の可視化 (Matplotlib)
     # 元データを散布図として描画
-    plt.scatter(fit_input, fit_output, label='Original Data (input.csv)', color='blue', alpha=0.5, s=10)
+    plt.scatter(fit_input, fit_output, label=f'Original Data ({os.path.basename(csv_file)})', color='blue', alpha=0.5, s=10)
 
     # 近似曲線をプロットするための滑らかな座標の配列を作成
     input_fit = np.linspace(min(fit_input), max(fit_input), 500)
